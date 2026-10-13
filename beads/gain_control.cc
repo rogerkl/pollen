@@ -146,7 +146,7 @@ void GainControl::Process(
       soft_clipping_amount,
       size);
   while (size--) {
-    // bead.init: libDaisy delivers float samples, no int32 conversion needed.
+    // pollen: libDaisy delivers float samples, no int32 conversion needed.
     float l = left_normalization ? in->r : in->l;
     float r = right_normalization ? in->l : in->r;
     

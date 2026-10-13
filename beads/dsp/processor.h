@@ -44,7 +44,7 @@
 // downsampled by a 0.5 factor before being processed. Low-pass filtering
 // is also applied to the output signal within the wow and flutter code.
 //
-// bead.init: disabled. libDaisy cannot clock the SAI at 24kHz, so the dirty
+// pollen: disabled. libDaisy cannot clock the SAI at 24kHz, so the dirty
 // tape mode runs at 48kHz with the 0.5 downsampling path instead.
 // #define ENABLE_HARDWARE_24K
 
@@ -77,7 +77,7 @@ class Processor {
   
   inline Media media() const { return media_; }
   inline bool mono() const { return mono_; }
-  // bead.init: whether the grain gate was high anywhere in the last block,
+  // pollen: whether the grain gate was high anywhere in the last block,
   // for a gate output jack of its own.
   inline bool gate() const { return gate_; }
   

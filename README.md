@@ -1,24 +1,26 @@
-# bead.init
+# Pollen
 
-Mutable Instruments Beads running on Electrosmith patch.init (Daisy Patch SM).
+A granular processor for Electrosmith patch.init (Daisy Patch SM), based on
+Emilie Gillet's open source Beads firmware
+(https://github.com/pichenettes/eurorack/tree/master/beads).
 
 ## Layout
 
 - `beads/`: copy of `eurorack/beads` at upstream commit `f4cfa76` (MIT,
   Emilie Gillet). Only the DSP, gain control, pot controller and lookup
   tables are included. The wavetable synth (`dsp/synth.*`, `dsp/wavetable_*`)
-  is left out. Local changes are marked `bead.init:`
+  is left out. Local changes are marked `pollen:`
   - `dsp/processor.h`: `ENABLE_HARDWARE_24K` disabled, libDaisy can't run
     the codec at 24kHz.
   - `gain_control.*`: takes float frames instead of Beads' int32 codec frames.
   - `dsp/processor.*`: `gate()` reports whether the grain gate was high in
     the last block, for the gate out jack.
   - `dsp/delay_granular_player.h`: 24 grains instead of 32
-    (`BEAD_INIT_MAX_GRAINS`). With 32 the worst case peaks above 100% CPU.
-- `src/bead_init.cpp`: replaces Beads' `beads.cc`, `ui.cc`, `cv_reader.cc` and
+    (`POLLEN_MAX_GRAINS`). With 32 the worst case peaks above 100% CPU.
+- `src/pollen.cpp`: replaces Beads' `beads.cc`, `ui.cc`, `cv_reader.cc` and
   `drivers/` with libDaisy.
 - `src/buffer_backup.*`: QSPI version of Beads' `background_buffer_backup`.
-- `bead_init_sram.lds` / `bead_init_flash.lds`: libDaisy's linker scripts
+- `pollen_sram.lds` / `pollen_flash.lds`: libDaisy's linker scripts
   plus sections for the delay banks and reverb buffer.
 - stmlib is used from `../eurorack/stmlib`, libDaisy from `../libDaisy`.
 

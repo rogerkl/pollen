@@ -1,5 +1,5 @@
 #!/bin/bash
-# Flashes build/bead_init.bin from WSL: asks the running app to jump to the
+# Flashes build/pollen.bin from WSL: asks the running app to jump to the
 # Daisy bootloader ('b' over USB serial), attaches the bootloader to WSL with
 # usbipd-win, runs `make program-dfu` and waits for the app to come back.
 #

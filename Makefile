@@ -1,6 +1,6 @@
-# bead.init: Mutable Instruments Beads on Electrosmith patch.init
+# Pollen: a granular processor for Electrosmith patch.init, based on Beads
 
-TARGET = bead_init
+TARGET = pollen
 
 # Paths to the sibling checkouts.
 LIBDAISY_DIR = ../libDaisy
@@ -12,13 +12,13 @@ GCC_PATH ?= ../arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin
 APP_TYPE ?= BOOT_SRAM
 
 ifeq ($(APP_TYPE), BOOT_SRAM)
-LDSCRIPT = bead_init_sram.lds
+LDSCRIPT = pollen_sram.lds
 else
-LDSCRIPT = bead_init_flash.lds
+LDSCRIPT = pollen_flash.lds
 endif
 
 CPP_SOURCES = \
-	src/bead_init.cpp \
+	src/pollen.cpp \
 	src/buffer_backup.cpp
 
 # Beads and stmlib use .cc, which libDaisy's makefile does not know about.
@@ -37,7 +37,7 @@ CC_SOURCES = \
 # The local copy of beads/ must come before the eurorack checkout.
 C_INCLUDES += -I. -Isrc -I$(EURORACK_DIR)
 
-# Extra defines from the command line, e.g. EXTRA_DEFS=-DBEAD_INIT_ALIAS_BANKS
+# Extra defines from the command line, e.g. EXTRA_DEFS=-DPOLLEN_ALIAS_BANKS
 C_DEFS += $(EXTRA_DEFS)
 
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core

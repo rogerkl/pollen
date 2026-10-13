@@ -1,4 +1,5 @@
-// bead.init: Mutable Instruments Beads on Electrosmith patch.init.
+// Pollen: a granular processor for Electrosmith patch.init, based on
+// Emilie Gillet's open source Beads firmware.
 //
 // The DSP in beads/ is Emilie Gillet's Beads code (MIT license). This file
 // replaces the Beads hardware layer (beads.cc, ui.cc, cv_reader.cc and
@@ -46,10 +47,10 @@ using beads::Processor;
 using stmlib::GateFlags;
 
 // Beads uses a 4kHz control rate: the block size is sample rate / 4000.
-#ifndef BEAD_INIT_BLOCK_RATE
-#define BEAD_INIT_BLOCK_RATE 4000
-#endif  // BEAD_INIT_BLOCK_RATE
-const int kBlockRate = BEAD_INIT_BLOCK_RATE;
+#ifndef POLLEN_BLOCK_RATE
+#define POLLEN_BLOCK_RATE 4000
+#endif  // POLLEN_BLOCK_RATE
+const int kBlockRate = POLLEN_BLOCK_RATE;
 const size_t kMaxBlockSize = 48000 / kBlockRate;
 const int kUiRateDivider = kBlockRate / 1000;
 const int kTransitionBlocks = kBlockRate / 4;
@@ -868,13 +869,13 @@ int main(void) {
   memset(delay_bank_2, 0, kDelayBankSize);
   memset(reverb_buffer, 0, sizeof(reverb_buffer));
 
-#ifdef BEAD_INIT_ALIAS_BANKS
+#ifdef POLLEN_ALIAS_BANKS
   // Profiling aid: all banks share D2 SRAM, to measure what SDRAM costs.
   // The audio is garbage in this mode.
   uint8_t* delay_banks[3] = { delay_bank_2, delay_bank_2, delay_bank_2 };
 #else
   uint8_t* delay_banks[3] = { delay_bank_0, delay_bank_1, delay_bank_2 };
-#endif  // BEAD_INIT_ALIAS_BANKS
+#endif  // POLLEN_ALIAS_BANKS
   processor.Init(delay_banks, reverb_buffer);
 
   LoadSettings();

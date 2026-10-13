@@ -1,4 +1,4 @@
-// bead.init: keeps a frozen buffer across power cycles, like Beads'
+// Pollen: keeps a frozen buffer across power cycles, like Beads'
 // BackgroundBufferBackup, but in the Daisy's QSPI flash.
 //
 // After freeze has been on for 10 seconds, the delay buffer is copied to QSPI
@@ -6,8 +6,8 @@
 // backup as complete. Unfreezing aborts a copy in progress and invalidates a
 // complete backup by zeroing its tag, which needs no erase.
 
-#ifndef BEAD_INIT_BUFFER_BACKUP_H_
-#define BEAD_INIT_BUFFER_BACKUP_H_
+#ifndef POLLEN_BUFFER_BACKUP_H_
+#define POLLEN_BUFFER_BACKUP_H_
 
 #include "daisy_patch_sm.h"
 
@@ -61,4 +61,4 @@ class BufferBackup {
   Header header_;
 };
 
-#endif  // BEAD_INIT_BUFFER_BACKUP_H_
+#endif  // POLLEN_BUFFER_BACKUP_H_

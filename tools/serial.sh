@@ -1,5 +1,5 @@
 #!/bin/bash
-# bead.init's USB serial port from WSL. The port stays on the Windows side,
+# Pollen's USB serial port from WSL. The port stays on the Windows side,
 # so it's opened through Windows PowerShell.
 #
 #   serial.sh read [SECONDS]   print what the module sends, 0: until Ctrl-C

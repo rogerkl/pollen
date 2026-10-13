@@ -1,4 +1,4 @@
-/* bead.init linker script, derived from libDaisy core/STM32H750IB_sram.lds.
+/* Pollen linker script, derived from libDaisy core/STM32H750IB_sram.lds.
  * Adds .ramd1 (delay bank 0), .ramd2 (delay bank 2) and .ramd3 (reverb)
  * for BOOT_SRAM builds.
  */
@@ -241,7 +241,7 @@ SECTIONS
 	} > QSPIFLASH
 
 
-	/* bead.init: Beads delay banks and reverb buffer (see src/bead_init.cpp) */
+	/* Pollen: Beads delay banks and reverb buffer (see src/pollen.cpp) */
 	/* Placed after the code and the .data load image, so it does not
 	 * end up inside the image the bootloader copies. */
 	.ramd1 (NOLOAD) :
