@@ -71,7 +71,7 @@ void GainControl::Process(
     uint8_t gain_setting,
     bool left_normalization,
     bool right_normalization,
-    const Codec::Frame* in,
+    const FloatFrame* in,
     FloatFrame* out,
     size_t size) {
   // Nothing is patched in the module, we can safely fill the output buffer with
@@ -146,11 +146,9 @@ void GainControl::Process(
       soft_clipping_amount,
       size);
   while (size--) {
-    int32_t l_int32 = left_normalization ? in->r : in->l;
-    int32_t r_int32 = right_normalization ? in->l : in->r;
-    
-    float l = static_cast<float>(l_int32) / 2147483648.0f;
-    float r = static_cast<float>(r_int32) / 2147483648.0f;
+    // bead.init: libDaisy delivers float samples, no int32 conversion needed.
+    float l = left_normalization ? in->r : in->l;
+    float r = right_normalization ? in->l : in->r;
     
     if (active) {
       const float peak = max(fabsf(l), fabsf(r));

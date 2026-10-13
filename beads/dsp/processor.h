@@ -43,7 +43,10 @@
 // When this flag is not set, the codec is run at 48kHz and the wet signal is
 // downsampled by a 0.5 factor before being processed. Low-pass filtering
 // is also applied to the output signal within the wow and flutter code.
-#define ENABLE_HARDWARE_24K
+//
+// bead.init: disabled. libDaisy cannot clock the SAI at 24kHz, so the dirty
+// tape mode runs at 48kHz with the 0.5 downsampling path instead.
+// #define ENABLE_HARDWARE_24K
 
 namespace beads {
 
@@ -74,6 +77,9 @@ class Processor {
   
   inline Media media() const { return media_; }
   inline bool mono() const { return mono_; }
+  // bead.init: whether the grain gate was high anywhere in the last block,
+  // for a gate output jack of its own.
+  inline bool gate() const { return gate_; }
   
   inline float sample_rate() const {
 #ifdef ENABLE_HARDWARE_24K
@@ -194,6 +200,7 @@ class Processor {
   Media media_;
   bool process_dry_;
   bool mono_;
+  bool gate_;
   
   float delay_mode_transition_;
 

@@ -34,7 +34,6 @@
 
 #include "stmlib/stmlib.h"
 
-#include "beads/drivers/codec.h"
 #include "beads/dsp/frame.h"
 
 namespace beads {
@@ -67,7 +66,7 @@ class GainControl {
       uint8_t gain,
       bool left_normalization,
       bool right_normalization,
-      const Codec::Frame* in,
+      const FloatFrame* in,
       FloatFrame* out,
       size_t size);
 

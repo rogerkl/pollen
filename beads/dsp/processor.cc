@@ -159,6 +159,10 @@ void Processor::Process(
       gate_out[i] = triggers[i].gate;
     }
   }
+  gate_ = false;
+  for (size_t i = 0; i < size; ++i) {
+    gate_ = gate_ || gate_out[i];
+  }
   
   FloatFrame dry_signal[size];
   

@@ -34,9 +34,17 @@
 #include "beads/dsp/delay_grain.h"
 #include "beads/dsp/granular_player.h"
 
+// bead.init: 24 grains instead of 32. With 32, maximum density, long grains
+// and high pitch peak above 100% CPU on patch.init, where part of the delay
+// buffer is in SDRAM. 24 peaks around 80%.
+#ifndef BEAD_INIT_MAX_GRAINS
+#define BEAD_INIT_MAX_GRAINS 24
+#endif  // BEAD_INIT_MAX_GRAINS
+
 namespace beads {
 
-class DelayGranularPlayer : public GranularPlayer<DelayGrain, 32> {
+class DelayGranularPlayer
+    : public GranularPlayer<DelayGrain, BEAD_INIT_MAX_GRAINS> {
  public:
   DelayGranularPlayer() { }
   ~DelayGranularPlayer() { }
