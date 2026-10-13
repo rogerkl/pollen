@@ -183,3 +183,8 @@ Worst case measured (density, size and pitch near max), 24 grains:
 | vintage digital | 54-56% | 61-62% |
 | clean tape | 51% | 55-56% |
 | dirty tape | 46% | 50-51% |
+
+## License
+
+MIT, see `LICENSE`. The files in `beads/` are Emilie Gillet's Beads code,
+also MIT licensed, with the notice in each file.
