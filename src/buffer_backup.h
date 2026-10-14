@@ -18,6 +18,8 @@ class BufferBackup {
   BufferBackup() { }
   ~BufferBackup() { }
 
+  // Finds out whether a complete backup is stored. Without Load(), it stays
+  // stored until the next unfreeze.
   void Init(daisy::QSPIHandle* qspi, beads::Processor* processor);
 
   // Restores a complete backup into the processor (media, mono, buffer and

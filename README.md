@@ -89,42 +89,85 @@ Setup:
 | Button | Seed. Starts locked like Beads. Tap to unlock (applied 300ms later, in case it's a tap-then-hold), hold 1.5s to lock |
 | Toggle | Freeze |
 | Button held + flip toggle | Next quality mode, LED blinks 1-4 times |
-| Button held at power-up | V/Oct calibration (see below) |
-| CV_5-CV_8 | Time, Size, Pitch (V/Oct), Density |
+| Button held at power-up | Flip the toggle while holding: settings pages. Release: V/Oct calibration |
+| CV_5-CV_8 | Time, Size, Pitch (V/Oct), Density or Shape (see settings) |
 | Gate in 1 / 2 | Seed / Freeze |
 | Gate out | Grain gate, the signal Beads puts on its right output in gate output mode |
 | LED (CV_OUT_2) | Freeze (full), seed (half), seed locked (dim) |
 
-The attenuverters only set the random modulation, Beads' behaviour with
-nothing patched: clockwise randomizes every grain (Pitch: fast random walk,
-up to +/-24 semitones), counter-clockwise randomizes some grains (Pitch: slow
-walk). Without jack detection there is no way to know whether a CV is
-patched, so the CV inputs always add at full scale instead of being scaled
-by the attenuverters. Attenuverter knobs follow Beads' curve, with a dead
-zone at noon.
+What the attenuverters do depends on the CV mode of their parameter (see
+Settings pages). By default they set the random modulation, Beads' behaviour
+with nothing patched: clockwise randomizes every grain (Pitch: fast random
+walk, up to +/-24 semitones), counter-clockwise randomizes some grains
+(Pitch: slow walk), and the CV inputs add at full scale. Attenuverter knobs
+follow Beads' curve, with a dead zone at noon.
 
 Quality modes, in Beads' order: 1 hi-fi, 2 vintage digital, 3 clean tape,
 4 dirty tape. Freeze ignores the toggle while the button is held and follows
 its position again on release.
 
-## Settings
+## Settings storage
 
 The quality mode, the hidden layer (Shape, Feedback, Dry/Wet, Reverb), the
-attenuverters and the CV calibration are saved to QSPI at `0x90400000`, after a mode change and when
-the button is released after editing a layer. Only changed values cause a write
+attenuverters, the settings pages and the CV calibration are saved to QSPI at
+`0x90400000`: after a mode change, when leaving the setup, and when the
+button is released after editing a layer. Only changed values cause a write
 (one 4K sector erase). The address is clear of the bootloader's reserved first
 256K, the app area (from `0x90040000`, at most 480K) and the last 256K, which
 is outside the bootloader's DFU map, so app updates leave it alone. Bump
 `kSettingsVersion` when the `Settings` struct changes, and add new fields at
 the end so `LoadSettings()` can migrate older versions (version 1 had no
-attenuverters, version 2 no calibration).
+attenuverters, version 2 no calibration, version 3 no settings pages).
+
+## Settings pages
+
+Hold the button while powering up, and flip the toggle while still holding
+it. The toggle position selects the page, flip it again to change pages. A
+knob changes its setting only once it is moved, so opening a page doesn't
+overwrite anything. Press the button to save and leave (LED solid for a
+second); freeze then follows the toggle again. A stored frozen buffer is
+neither restored nor dropped by the setup.
+
+Three-way settings use the knob in thirds: counter-clockwise, noon,
+clockwise.
+
+Toggle in the Freeze position, inputs:
+
+| Knob | Setting |
+|---|---|
+| 1 | Input mode: detect (as described under Mono detection) / always mono / always stereo |
+| 2 | Gain: fully counter-clockwise automatic (Beads' AGC), else fixed, 1x to 40x with Beads' curve |
+
+The LED shows the input level after the gain (Beads' VU meter), or the zone
+while knob 1 is set.
+
+Toggle in the other position, CV modes, one per attenuverter. Knob 1 is
+Shape, which has no input of its own: any mode other than the first takes
+CV_8 from Density.
+
+| Knob | Parameter | CCW: CV ignored | Noon: CV added | CW: CV attenuverted |
+|---|---|---|---|---|
+| 1 | Shape | CV_8 goes to Density | CV_8 added to Shape | CV_8 into Shape's attenuverter |
+| 2 | Time (CV_5) | | | |
+| 3 | Size (CV_6) | | | |
+| 4 | Pitch (CV_7) | | | |
+
+- CV ignored: the attenuverter sets the random modulation.
+- CV added: the CV is added to the knob at full scale, the attenuverter sets
+  the random modulation. The default for Time, Size and Pitch.
+- CV attenuverted: Beads' behaviour with a CV patched. Clockwise the
+  attenuverter scales the CV (fully clockwise is 1V/Oct for Pitch),
+  counter-clockwise the CV sets the amount of random modulation.
+
+The LED shows the zone of the last knob turned (off, half, full), and blinks
+before the first.
 
 ## V/Oct calibration
 
 Like Beads, with two reference voltages into the pitch input (CV_7):
 
-1. Hold the button while powering up (or send `c` over USB serial). The LED
-   blinks once per second.
+1. Hold the button while powering up and release it without flipping the
+   toggle (or send `c` over USB serial). The LED blinks once per second.
 2. Unpatch CV_5, CV_6 and CV_8, patch 1V into CV_7, press the button. The LED
    blinks twice per second.
 3. Patch 3V into CV_7, press the button.
@@ -172,8 +215,10 @@ zeroing its tag, so does powering up with the toggle off.
 Once per second: quality mode, mono or stereo, audio blocks run, average and
 peak CPU load for that second, gate out pulses, input peak levels and the peak difference
 between them, the knob positions, the hidden layer values, the attenuverters
-(-100 to 100) and the buffer
-backup progress (100% when a complete backup is stored). Commands: `b` jumps to the
+(-100 to 100), the buffer
+backup progress (100% when a complete backup is stored), the pitch CV and
+calibration, and the settings pages: input mode, gain (0 automatic) and CV
+modes (0 ignored, 1 added, 2 attenuverted). Commands: `b` jumps to the
 bootloader, `1`-`4` select the quality mode, `c` starts the V/Oct
 calibration.
 

@@ -25,17 +25,20 @@ void BufferBackup::Init(QSPIHandle* qspi, Processor* processor) {
   qspi_ = qspi;
   processor_ = processor;
   state_ = STATE_IDLE;
-  saved_ = false;
   started_ = false;
   freeze_start_time_ = System::GetNow();
+
+  const Header* header = static_cast<const Header*>(
+      qspi_->GetData(kBackupQspiOffset));
+  saved_ = header->tag == kTag && header->media <= Processor::MEDIA_DIGITAL;
 }
 
 bool BufferBackup::Load(bool frozen) {
-  const Header* header = static_cast<const Header*>(
-      qspi_->GetData(kBackupQspiOffset));
-  if (header->tag != kTag || header->media > Processor::MEDIA_DIGITAL) {
+  if (!saved_) {
     return false;
   }
+  const Header* header = static_cast<const Header*>(
+      qspi_->GetData(kBackupQspiOffset));
   if (!frozen) {
     // Freeze was turned off while the module was off.
     Invalidate();

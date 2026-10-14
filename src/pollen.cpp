@@ -12,8 +12,9 @@
 //   button             Seed. Hold to lock, tap to unlock.
 //   toggle             Freeze
 //   button + toggle    Each flip selects the next quality mode
-//   CV_5..CV_8         Time, Size, Pitch (V/Oct), Density
-//   button at power-up V/Oct calibration: 1V, press, 3V, press
+//   CV_5..CV_8         Time, Size, Pitch (V/Oct), Density (or Shape)
+//   button at power-up flip the toggle while holding it: settings pages,
+//                      release it: V/Oct calibration (1V, press, 3V, press)
 //   gate in 1 / 2      Seed / Freeze
 //   gate out           Grain gate (Beads' gate output mode)
 //   CV_OUT_2 (LED)     Freeze, seed activity
@@ -83,10 +84,23 @@ const uint32_t kIdenticalTime = 1000;  // ms
 // and the last 256K is outside the bootloader's DFU map. The settings get a
 // sector of their own far from all of these.
 const uint32_t kSettingsQspiOffset = 0x400000;
-const uint32_t kSettingsVersion = 3;
+const uint32_t kSettingsVersion = 4;
 
 const char* const kMediaName[] = {
   "dirty tape", "clean tape", "vintage digital", "hi-fi"
+};
+
+const char* const kInputModeName[] = { "detect", "mono", "stereo" };
+
+// Indexed by Setup.
+const char* const kSetupText[] = {
+  "",
+  " | SETUP: flip the toggle for settings, release for calibration",
+  " | CALIBRATING: 1V, press",
+  " | CALIBRATING: 3V, press",
+  " | SETTINGS inputs: knob 1 mode, knob 2 gain, press to save",
+  " | SETTINGS CV modes: knob 1-4 Shape (CV_8), Time, Size, Pitch, "
+      "press to save"
 };
 
 // Banks 0-1 live in AXI SRAM like on Beads when running from internal flash.
@@ -121,10 +135,8 @@ enum HiddenParameter {
   HIDDEN_LAST
 };
 
-// Edited by tapping the button, then holding it and turning knob 1-4. Each
-// knob sets the attenuverter of its parameter in the other layers. Without
-// jack detection the attenuverters only set the random modulation (Beads'
-// behaviour with nothing patched), the CV inputs always add at full scale.
+// Edited by tapping the button, then holding it and turning knob 1-4. What
+// they do depends on the parameter's CV mode, see CvMode.
 enum Attenuverter {
   ATTENUVERTER_SHAPE,
   ATTENUVERTER_TIME,
@@ -148,7 +160,35 @@ enum CvInput {
   CV_INPUT_LAST
 };
 
+// CV_INPUT_DENSITY goes to Shape instead when Shape has a CV mode.
 const int kCvAdc[CV_INPUT_LAST] = { CV_5, CV_6, CV_7, CV_8 };
+
+// Settings page with the toggle in its Freeze position.
+enum InputMode {
+  INPUT_MODE_DETECT,  // mono detection from the input levels
+  INPUT_MODE_MONO,
+  INPUT_MODE_STEREO
+};
+
+// Below this the gain knob selects the automatic gain.
+const float kGainAutoThreshold = 0.05f;
+
+// Settings page with the toggle in the other position, one per attenuverter.
+// patch.init can't tell whether a CV input is patched, Beads can.
+enum CvMode {
+  // CV ignored, the attenuverter sets the random modulation (Beads with
+  // nothing patched). For Shape: CV_8 goes to Density.
+  CV_MODE_IGNORE,
+  // CV added to the knob at full scale, the attenuverter sets the random
+  // modulation.
+  CV_MODE_ADD,
+  // Beads with a CV patched: clockwise the attenuverter scales the CV,
+  // counter-clockwise the CV controls the amount of random modulation.
+  CV_MODE_ATTENUVERTER
+};
+
+// Knob zones for the three-way settings, and the LED brightness for each.
+const float kZoneLed[3] = { 0.0f, 2.0f, 5.0f };
 
 // V/Oct calibration, like Beads: 1V then 3V into the pitch input, with the
 // other CV inputs unpatched to measure their 0V offsets. GetAdcValue() gives
@@ -171,6 +211,10 @@ struct Settings {
   // Since version 3. Readings at 0V, and semitones per unit for pitch.
   float cv_offset[CV_INPUT_LAST];
   float pitch_scale;
+  // Since version 4, the settings pages.
+  uint8_t input_mode;
+  uint8_t gain;  // 0: automatic, 1-255 like Beads' manual gain
+  uint8_t cv_mode[ATTENUVERTER_LAST];
 
   bool operator!=(const Settings& other) const {
     if (version != other.version || media != other.media) {
@@ -191,7 +235,13 @@ struct Settings {
         return true;
       }
     }
-    return pitch_scale != other.pitch_scale;
+    for (int i = 0; i < ATTENUVERTER_LAST; ++i) {
+      if (cv_mode[i] != other.cv_mode[i]) {
+        return true;
+      }
+    }
+    return pitch_scale != other.pitch_scale || \
+        input_mode != other.input_mode || gain != other.gain;
   }
 };
 
@@ -201,7 +251,11 @@ const Settings kDefaultSettings = {
   { 0.5f, 0.0f, 0.5f, 0.3f },
   { 0.0f, 0.0f, 0.0f, 0.0f },
   { 0.0f, 0.0f, 0.0f, 0.0f },
-  kNominalPitchScale
+  kNominalPitchScale,
+  INPUT_MODE_DETECT,
+  0,
+  // CV_8 on Density, the other CVs added to their knobs.
+  { CV_MODE_IGNORE, CV_MODE_ADD, CV_MODE_ADD, CV_MODE_ADD }
 };
 
 DaisyPatchSM hw;
@@ -222,6 +276,10 @@ float attenuverter[ATTENUVERTER_LAST];
 stmlib::HysteresisFilter time_hysteresis;
 float cv_time_lp;
 float cv_size_lp;
+float cv_shape_lp;
+volatile InputMode input_mode;
+uint8_t gain_setting;
+CvMode cv_mode[ATTENUVERTER_LAST];
 
 bool seed_pressed;
 // Like Beads: grains only play while the seed gate is high, and the module
@@ -276,23 +334,38 @@ volatile bool save_settings;
 int transition_blocks;
 int ui_divider;
 
-enum CalibrationStep {
-  CALIBRATION_OFF,
-  CALIBRATION_1V,
-  CALIBRATION_3V
+enum Setup {
+  SETUP_OFF,
+  // Button held at power-up: flipping the toggle opens the settings pages,
+  // releasing the button starts the V/Oct calibration.
+  SETUP_CHOOSING,
+  SETUP_CALIBRATION_1V,
+  SETUP_CALIBRATION_3V,
+  SETUP_PAGE_INPUTS,  // toggle in the Freeze position
+  SETUP_PAGE_CV
 };
 
-volatile CalibrationStep calibration_step;
-// Steps only advance after the button has been released once, so holding it
-// at power-up to enter calibration doesn't count as the first step.
+// The debounced switches need a few ms after power-up to settle, and report
+// an edge when they get there, so the power-up choice compares positions.
+const uint32_t kSetupSettleTime = 50;  // ms
+
+volatile Setup setup;
+uint32_t setup_start_time;
+bool setup_toggle_start;
+// Knob last turned in a settings page, -1 before the first.
+int setup_last_knob;
+// The press that ends the setup must not reach ProcessButton().
+bool button_owned_by_setup;
+uint32_t setup_result_time;
+bool setup_result_ok;
+// Calibration steps only advance after the button has been released once,
+// so the press that starts it doesn't count as the first step.
 bool calibration_armed;
 float cv_offset[CV_INPUT_LAST];
 float pitch_scale = kNominalPitchScale;
 // CV readings averaged over about 125ms, used by the calibration.
 float cv_average[CV_INPUT_LAST];
 float calibration_1v[CV_INPUT_LAST];
-uint32_t calibration_result_time;
-bool calibration_ok;
 
 // Diagnostics, printed once per second over USB serial.
 volatile float pitch_cv_monitor;
@@ -304,7 +377,7 @@ bool previous_gate;
 // as the port is closed again. The status line is sent directly instead and
 // dropped when nobody reads it. The USB stack reads the buffer
 // asynchronously, so a new line goes into the buffer that isn't in flight.
-char status_line[2][320];
+char status_line[2][448];
 int status_in_flight = 1;
 
 // Beads' LAW_DETUNE pitch knob: +/-24 semitones with sticky intervals.
@@ -378,7 +451,11 @@ void DetectMono(AudioHandle::InputBuffer in, size_t size, uint32_t now) {
   }
 
   bool mono = requested_mono;
-  if (mono) {
+  if (input_mode == INPUT_MODE_MONO) {
+    mono = true;
+  } else if (input_mode == INPUT_MODE_STEREO) {
+    mono = false;
+  } else if (mono) {
     mono = !(active[0] && active[1] && different);
   } else {
     mono = (active[0] && active[1] && !different) || \
@@ -396,6 +473,8 @@ void DetectMono(AudioHandle::InputBuffer in, size_t size, uint32_t now) {
   } else if (active[1]) {
     left_normalized = true;
     right_normalized = false;
+  } else if (!left_normalized && !right_normalized) {
+    right_normalized = true;
   }
   requested_mono = mono;
 }
@@ -409,10 +488,18 @@ float AttenuverterLaw(float v) {
 
 void StartCalibration() {
   calibration_armed = false;
-  calibration_step = CALIBRATION_1V;
+  setup = SETUP_CALIBRATION_1V;
 }
 
-// Called instead of ProcessButton() while calibrating.
+void FinishSetup(bool ok) {
+  setup_result_ok = ok;
+  setup_result_time = System::GetNow();
+  setup = SETUP_OFF;
+  button_owned_by_setup = button.Pressed();
+  // The toggle isn't followed during the setup.
+  freeze_toggle = toggle.Pressed();
+}
+
 void ProcessCalibration() {
   if (!calibration_armed) {
     calibration_armed = !button.RawState();
@@ -422,9 +509,9 @@ void ProcessCalibration() {
     return;
   }
 
-  if (calibration_step == CALIBRATION_1V) {
+  if (setup == SETUP_CALIBRATION_1V) {
     std::copy(&cv_average[0], &cv_average[CV_INPUT_LAST], &calibration_1v[0]);
-    calibration_step = CALIBRATION_3V;
+    setup = SETUP_CALIBRATION_3V;
     return;
   }
 
@@ -435,25 +522,158 @@ void ProcessCalibration() {
   std::copy(&calibration_1v[0], &calibration_1v[CV_INPUT_LAST], &offset[0]);
   offset[CV_INPUT_PITCH] = scale != 0.0f ? pitch_1v - 12.0f / scale : 0.0f;
 
-  calibration_ok = fabsf(scale - kNominalPitchScale) <= \
+  bool ok = fabsf(scale - kNominalPitchScale) <= \
       kMaxPitchScaleError * kNominalPitchScale;
   // A large offset means something was left patched.
   for (int i = 0; i < CV_INPUT_LAST; ++i) {
-    calibration_ok = calibration_ok && fabsf(offset[i]) <= kMaxCvOffset;
+    ok = ok && fabsf(offset[i]) <= kMaxCvOffset;
   }
-  if (calibration_ok) {
+  if (ok) {
     pitch_scale = scale;
     std::copy(&offset[0], &offset[CV_INPUT_LAST], &cv_offset[0]);
     save_settings = true;
   }
-  calibration_result_time = System::GetNow();
-  calibration_step = CALIBRATION_OFF;
-  // The toggle isn't followed while calibrating.
-  freeze_toggle = toggle.Pressed();
+  FinishSetup(ok);
+}
+
+int Zone(float v) {
+  return v < 0.333f ? 0 : (v < 0.667f ? 1 : 2);
+}
+
+// The knob's position counts only once it has been moved, see
+// PotController, so opening a page doesn't overwrite its settings.
+void OpenSettingsPage(Setup page) {
+  setup = page;
+  setup_last_knob = -1;
+  for (int i = 0; i < KNOB_LAST; ++i) {
+    pot[i].Unlock();
+    pot[i].Lock();
+  }
+}
+
+// Returns false for knobs without a setting on the page.
+bool ApplySetting(int knob, float value) {
+  if (setup == SETUP_PAGE_CV) {
+    cv_mode[knob] = CvMode(Zone(value));
+    return true;
+  }
+  if (knob == 0) {
+    input_mode = InputMode(Zone(value));
+    return true;
+  }
+  if (knob == 1) {
+    uint8_t gain = value < kGainAutoThreshold
+        ? 0
+        : uint8_t(1.0f + 254.0f * (value - kGainAutoThreshold) / \
+            (1.0f - kGainAutoThreshold));
+    if (gain == 0 && gain_setting != 0) {
+      // Like Beads: back to automatic gain relearns the input level.
+      gain_control.Restart();
+    }
+    gain_setting = gain;
+    return true;
+  }
+  return false;
+}
+
+// Called instead of ProcessButton() during the setup.
+void ProcessSetup() {
+  Setup toggle_page = toggle.Pressed() ? SETUP_PAGE_INPUTS : SETUP_PAGE_CV;
+  switch (setup) {
+    case SETUP_CHOOSING:
+      if (System::GetNow() - setup_start_time < kSetupSettleTime) {
+        break;
+      }
+      if (toggle.Pressed() != setup_toggle_start) {
+        OpenSettingsPage(toggle_page);
+      } else if (!button.Pressed()) {
+        calibration_armed = true;
+        setup = SETUP_CALIBRATION_1V;
+      }
+      break;
+
+    case SETUP_CALIBRATION_1V:
+    case SETUP_CALIBRATION_3V:
+      ProcessCalibration();
+      break;
+
+    case SETUP_PAGE_INPUTS:
+    case SETUP_PAGE_CV:
+      if (toggle_page != setup) {
+        OpenSettingsPage(toggle_page);
+        break;
+      }
+      for (int i = 0; i < KNOB_LAST; ++i) {
+        if (pot[i].editing_hidden_parameter() && \
+            ApplySetting(i, pot[i].hidden_parameter())) {
+          setup_last_knob = i;
+        }
+      }
+      if (button.RisingEdge()) {
+        for (int i = 0; i < KNOB_LAST; ++i) {
+          pot[i].Unlock();
+        }
+        save_settings = true;
+        FinishSetup(true);
+      }
+      break;
+
+    default:
+      break;
+  }
+}
+
+// LED in the setup, or -1 outside of it.
+float SetupLed(uint32_t now) {
+  if (setup == SETUP_CHOOSING || setup == SETUP_CALIBRATION_1V || \
+      setup == SETUP_CALIBRATION_3V) {
+    // One or two blinks per second for the 1V and 3V steps.
+    uint32_t blinks = setup == SETUP_CALIBRATION_3V ? 2 : 1;
+    uint32_t t = now % 1000;
+    return t < blinks * 250 && t % 250 < 125 ? 5.0f : 0.0f;
+  }
+  if (setup == SETUP_PAGE_INPUTS || setup == SETUP_PAGE_CV) {
+    // The three-way settings show their zone. Otherwise the input page shows
+    // the input level after the gain (Beads' VU meter) on a dim base, the CV
+    // page blinks.
+    if (setup == SETUP_PAGE_CV && setup_last_knob >= 0) {
+      return kZoneLed[cv_mode[setup_last_knob]];
+    } else if (setup == SETUP_PAGE_INPUTS && setup_last_knob == 0) {
+      return kZoneLed[input_mode];
+    } else if (setup == SETUP_PAGE_INPUTS) {
+      return 0.5f + 4.5f * float(gain_control.vu_meter()) / 255.0f;
+    }
+    return now % 1000 < 500 ? 5.0f : 0.0f;
+  }
+  if (setup_result_time && now - setup_result_time < kCalibrationResultTime) {
+    // Solid when saved, flickering when rejected.
+    return setup_result_ok || (now & 32) ? 5.0f : 0.0f;
+  }
+  return -1.0f;
+}
+
+// Beads' attenuverter handling for a parameter whose base is set, see
+// CvMode.
+void ApplyCv(
+    beads::RandomizedParameter* parameter,
+    CvMode mode,
+    float attenuverter,
+    float cv) {
+  parameter->attenuverter = attenuverter;
+  parameter->has_cv = mode == CV_MODE_ATTENUVERTER;
+  parameter->cv = parameter->has_cv ? cv : 0.0f;
+  if (mode == CV_MODE_ADD) {
+    parameter->base += cv;
+  }
 }
 
 void ProcessButton() {
   uint32_t now = System::GetNow();
+
+  if (button_owned_by_setup) {
+    button_owned_by_setup = button.Pressed();
+    return;
+  }
 
   if (button.RisingEdge()) {
     for (int i = 0; i < KNOB_LAST; ++i) {
@@ -540,8 +760,8 @@ void AudioCallback(
   hw.ProcessAllControls();
   button.Debounce();
   toggle.Debounce();
-  if (calibration_step != CALIBRATION_OFF) {
-    ProcessCalibration();
+  if (setup != SETUP_OFF) {
+    ProcessSetup();
   } else {
     ProcessButton();
   }
@@ -569,6 +789,7 @@ void AudioCallback(
   }
   ONE_POLE(cv_time_lp, cv[CV_INPUT_TIME] * 1.6f, 0.5f);
   ONE_POLE(cv_size_lp, cv[CV_INPUT_SIZE] * 1.6f, 0.5f);
+  ONE_POLE(cv_shape_lp, cv[CV_INPUT_DENSITY] * 1.6f, 0.5f);
   float cv_pitch = cv[CV_INPUT_PITCH] * pitch_scale;
   float cv_density = cv[CV_INPUT_DENSITY];
   pitch_cv_monitor = cv_pitch;
@@ -613,15 +834,9 @@ void AudioCallback(
   if (button.Pressed() && layer == LAYER_ATTENUVERTERS) {
     led = (now & 128) ? 5.0f : 0.0f;
   }
-  if (calibration_step != CALIBRATION_OFF) {
-    // One or two blinks per second for the 1V and 3V steps.
-    uint32_t blinks = calibration_step == CALIBRATION_1V ? 1 : 2;
-    uint32_t t = now % 1000;
-    led = t < blinks * 250 && t % 250 < 125 ? 5.0f : 0.0f;
-  } else if (calibration_result_time && \
-      now - calibration_result_time < kCalibrationResultTime) {
-    // Solid when saved, flickering when rejected.
-    led = calibration_ok || (now & 32) ? 5.0f : 0.0f;
+  float setup_led = SetupLed(now);
+  if (setup_led >= 0.0f) {
+    led = setup_led;
   }
   uint32_t blink_time = now - blink_start;
   if (blink_time < uint32_t(blink_count) * kBlinkPeriod) {
@@ -642,7 +857,7 @@ void AudioCallback(
   }
   gain_control.Process(
       !transition_blocks,
-      0,
+      gain_setting,
       left_normalized,
       right_normalized,
       float_in,
@@ -660,36 +875,40 @@ void AudioCallback(
     return;
   }
 
-  // has_cv is always false so the attenuverters set the random modulation,
-  // and the CVs are added to the base value instead (Beads' synth does the
-  // same for pitch).
   beads::Parameters p;
-  p.time.base = time_hysteresis.Process(pot[KNOB_TIME].main_parameter()) \
-      + cv_time_lp;
-  p.time.attenuverter = attenuverter[ATTENUVERTER_TIME];
-  p.time.has_cv = false;
-  p.time.cv = 0.0f;
+  p.time.base = time_hysteresis.Process(pot[KNOB_TIME].main_parameter());
+  ApplyCv(
+      &p.time,
+      cv_mode[ATTENUVERTER_TIME],
+      attenuverter[ATTENUVERTER_TIME],
+      cv_time_lp);
 
-  p.size.base = pot[KNOB_SIZE].main_parameter() + cv_size_lp;
-  p.size.attenuverter = attenuverter[ATTENUVERTER_SIZE];
-  p.size.has_cv = false;
-  p.size.cv = 0.0f;
+  p.size.base = pot[KNOB_SIZE].main_parameter();
+  ApplyCv(
+      &p.size,
+      cv_mode[ATTENUVERTER_SIZE],
+      attenuverter[ATTENUVERTER_SIZE],
+      cv_size_lp);
 
   p.shape.base = hidden[HIDDEN_SHAPE];
-  p.shape.attenuverter = attenuverter[ATTENUVERTER_SHAPE];
-  p.shape.has_cv = false;
-  p.shape.cv = 0.0f;
+  ApplyCv(
+      &p.shape,
+      cv_mode[ATTENUVERTER_SHAPE],
+      attenuverter[ATTENUVERTER_SHAPE],
+      cv_shape_lp);
 
-  p.pitch.base = DetuneLaw(pot[KNOB_PITCH].main_parameter()) + cv_pitch;
-  p.pitch.attenuverter = attenuverter[ATTENUVERTER_PITCH];
-  p.pitch.has_cv = false;
-  p.pitch.cv = 0.0f;
+  p.pitch.base = DetuneLaw(pot[KNOB_PITCH].main_parameter());
+  ApplyCv(
+      &p.pitch,
+      cv_mode[ATTENUVERTER_PITCH],
+      attenuverter[ATTENUVERTER_PITCH],
+      cv_pitch);
 
   p.monophonic_mode = false;
 
   beads::ModulatedParameter d;
   d.base = pot[KNOB_DENSITY].main_parameter();
-  d.cv = cv_density;
+  d.cv = cv_mode[ATTENUVERTER_SHAPE] == CV_MODE_IGNORE ? cv_density : 0.0f;
 
   Processor::MixParameters m;
   m.feedback = std::min(hidden[HIDDEN_FEEDBACK] * 1.005f, 1.0f);
@@ -773,6 +992,14 @@ void LoadSettings() {
           &stored.cv_offset[0]);
       stored.pitch_scale = kDefaultSettings.pitch_scale;
     }
+    if (stored.version < 4) {
+      stored.input_mode = kDefaultSettings.input_mode;
+      stored.gain = kDefaultSettings.gain;
+      std::copy(
+          &kDefaultSettings.cv_mode[0],
+          &kDefaultSettings.cv_mode[ATTENUVERTER_LAST],
+          &stored.cv_mode[0]);
+    }
     stored.version = kSettingsVersion;
     storage.Save();
   } else if (stored.version != kSettingsVersion) {
@@ -801,6 +1028,15 @@ void LoadSettings() {
       kMaxPitchScaleError * kNominalPitchScale
       ? s.pitch_scale
       : kDefaultSettings.pitch_scale;
+  input_mode = InputMode(s.input_mode <= INPUT_MODE_STEREO
+      ? s.input_mode
+      : kDefaultSettings.input_mode);
+  gain_setting = s.gain;
+  for (int i = 0; i < ATTENUVERTER_LAST; ++i) {
+    cv_mode[i] = CvMode(s.cv_mode[i] <= CV_MODE_ATTENUVERTER
+        ? s.cv_mode[i]
+        : kDefaultSettings.cv_mode[i]);
+  }
 }
 
 // Erases and writes a 4K QSPI sector, but only if something changed.
@@ -818,6 +1054,11 @@ void SaveSettings() {
     s.cv_offset[i] = cv_offset[i];
   }
   s.pitch_scale = pitch_scale;
+  s.input_mode = input_mode;
+  s.gain = gain_setting;
+  for (int i = 0; i < ATTENUVERTER_LAST; ++i) {
+    s.cv_mode[i] = cv_mode[i];
+  }
   storage.Save();
 }
 
@@ -852,7 +1093,7 @@ int main(void) {
   hw.Init();
   button.Init(DaisyPatchSM::B7);
   toggle.Init(DaisyPatchSM::B8);
-  bool calibrate = button.RawState();
+  bool setup_at_power_up = button.RawState();
 
   for (int i = 0; i < KNOB_LAST; ++i) {
     pot[i].Init(1.0f, 0.0f);
@@ -881,18 +1122,24 @@ int main(void) {
   LoadSettings();
   processor.Configure(requested_media, false);
 
-  freeze_toggle = freeze_active = toggle.RawState();
   buffer_backup.Init(&hw.qspi, &processor);
-  if (buffer_backup.Load(freeze_toggle)) {
-    // The backup knows the quality mode the buffer was recorded in.
-    requested_media = processor.media();
+  if (setup_at_power_up) {
+    // The setup leaves a stored frozen buffer alone: it's neither restored
+    // nor dropped, and freeze stays off until the setup is done.
+    freeze_toggle = freeze_active = false;
+    setup_toggle_start = toggle.RawState();
+    setup_start_time = System::GetNow();
+    setup = SETUP_CHOOSING;
+  } else {
+    freeze_toggle = freeze_active = toggle.RawState();
+    if (buffer_backup.Load(freeze_toggle)) {
+      // The backup knows the quality mode the buffer was recorded in.
+      requested_media = processor.media();
+    }
   }
 
   hw.usb.Init(UsbHandle::FS_INTERNAL);
   hw.usb.SetReceiveCallback(UsbReceive, UsbHandle::FS_INTERNAL);
-  if (calibrate) {
-    StartCalibration();
-  }
   StartAudio(true);
 
   uint32_t last_report = System::GetNow();
@@ -914,7 +1161,9 @@ int main(void) {
       save_settings = false;
       SaveSettings();
     }
-    buffer_backup.Process(freeze_active);
+    if (setup == SETUP_OFF) {
+      buffer_backup.Process(freeze_active);
+    }
     backup_busy = buffer_backup.busy();
     uint32_t now = System::GetNow();
     if (now - last_report >= 1000) {
@@ -933,7 +1182,8 @@ int main(void) {
           "%s %s | blocks %d cpu avg %d.%d%% max %d.%d%% | gates %d | "
           "in %d %d diff %d dB | "
           "knobs %d %d %d %d | hidden %d %d %d %d | atv %d %d %d %d | "
-          "backup %d%% | pitch cv %d ct, cal %d %d%s%s\r\n",
+          "backup %d%% | pitch cv %d ct, cal %d %d | "
+          "inmode %s gain %d cvmode %d %d %d %d%s%s\r\n",
           kMediaName[current_media],
           processor.mono() ? "mono" : "stereo",
           int(blocks),
@@ -959,11 +1209,13 @@ int main(void) {
           int(pitch_cv_monitor * 100.0f),
           int(pitch_scale * 100.0f),
           int(cv_offset[CV_INPUT_PITCH] * 5000.0f),
-          calibration_step == CALIBRATION_1V
-              ? " | CALIBRATING: 1V, press"
-              : (calibration_step == CALIBRATION_3V
-                  ? " | CALIBRATING: 3V, press"
-                  : ""),
+          kInputModeName[input_mode],
+          int(gain_setting),
+          int(cv_mode[ATTENUVERTER_SHAPE]),
+          int(cv_mode[ATTENUVERTER_TIME]),
+          int(cv_mode[ATTENUVERTER_SIZE]),
+          int(cv_mode[ATTENUVERTER_PITCH]),
+          kSetupText[setup],
           pot[KNOB_SIZE].main_parameter() > 0.99f ? " (delay mode)" : "");
       input_peak[0] = input_peak[1] = difference_peak = 0.0f;
       length = std::min(length, int(sizeof(status_line[0])) - 1);
