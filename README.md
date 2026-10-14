@@ -4,6 +4,12 @@ A granular processor for Electrosmith patch.init (Daisy Patch SM), based on
 Emilie Gillet's open source Beads firmware
 (https://github.com/pichenettes/eurorack/tree/master/beads).
 
+Beads has twelve knobs, four buttons and jack detection. patch.init has four
+knobs, one button, a toggle and no jack detection, so some of Beads' controls
+are reached through layers, button gestures and settings pages, and a few
+behaviours are worked around. The sections below describe them, and
+Differences from Beads sums them up.
+
 # Using Pollen
 
 ## Controls
@@ -69,8 +75,9 @@ saved buffer.
 
 Beads records in mono, with twice the buffer time, when only one audio input
 is patched. patch.init can't tell which jacks are patched, and it feeds the
-left input to the right one when the right jack is empty, so by default
-Pollen decides from the input levels:
+left input to the right one when the right jack is empty. With the input mode
+set to detect, the default (see Settings pages), Pollen decides from the
+input levels:
 
 - A signal on one side while the other has been silent for 10 seconds (or
   never had any since power-up): mono, the silent side gets a copy.
@@ -80,8 +87,11 @@ Pollen decides from the input levels:
 - No signal on either side: no change.
 
 Switching clears the buffer and mutes for 250ms, like Beads. It never
-happens while frozen; a pending switch is applied on unfreeze. The settings
-pages can fix the mode to mono or stereo instead.
+happens while frozen; a pending switch is applied on unfreeze.
+
+With the input mode set to mono or stereo, none of this applies: the mode
+stays fixed whatever is patched. Mono then copies the input that has a
+signal (left if both have one), stereo uses both inputs as they are.
 
 ## Settings pages
 
